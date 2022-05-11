@@ -1,0 +1,293 @@
+---
+title: "STAT632_GroupProject"
+author: "John Li"
+date: "4/11/2022"
+output: html_document
+---
+
+## Things to include
+
+Data Cleaning 
+
+Visualization 
+  - Correlation plot
+  
+Check Assumptions
+
+Model Building (possibly compare multiple)
+
+Cross validation (test and training set)
+
+Calculate Stats (MSE, RMSE, R-squared)
+
+Conclusions
+
+# Start 
+
+## Description of parameters
+
+Fixed Acidity: are non-volatile acids that do not evaporate readily
+
+Volatile Acidity: are high acetic acid in wine which leads to an unpleasant vinegar taste
+
+Citric Acid: acts as a preservative to increase acidity. When in small quantities, adds freshness and flavor to wines
+
+Residual Sugar: is the amount of sugar remaining after fermentation stops. The key is to have a perfect balance between sweetness and sourness. It is important to note that wines > 45g/ltrs are sweet
+
+Chlorides: the amount of salt in the wine
+
+Free Sulfur Dioxide: it prevents microbial growth and the oxidation of wine
+
+Total Sulfur Dioxide: is the amount of free + bound forms of SO2
+
+Density: sweeter wines have a higher density
+
+pH: describes the level of acidity on a scale of 0–14. Most wines are always between 3–4 on the pH scale
+
+Alcohol: available in small quantities in wines makes the drinkers sociable
+
+Sulphates: a wine additive that contributes to SO2 levels and acts as an antimicrobial and antioxidant
+
+Quality: which is the output variable/predictor
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+red <- read.csv("winequality-red.csv", sep=";") #loading dataset
+```
+
+## Basic descriptive statistics
+
+```{r}
+head(red)
+dim(red)
+names(red)
+str(red)
+```
+```{r}
+summary(red)
+```
+
+## Cleaning the dataset
+
+```{r}
+sum(is.na(red))
+```
+The dataset is clean and has no missing values. 
+
+```{r}
+df1 <- red %>% #adding recommendation as function of quality
+  mutate(quality = ifelse(quality <= 5, 0, 1))
+```
+
+We will choose quality less than or equal to 5 as not recommend (0), and greater than 5 as recommend (1).
+
+```{r}
+table(df1$recommend)
+```
+There are 744 observations for 0 and 855 for 1. The data is nearly symmetrical with regard to both cases.
+
+
+## Visualizing distribution of predictors 
+
+```{r}
+library("tidyr") #reshape data into long format
+
+wine_long <- red %>%
+  pivot_longer(colnames(red)) %>%
+  as.data.frame() #keep data.frame class
+
+head(wine_long)
+```
+
+```{r}
+pred.dist1 <- ggplot(wine_long, aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~ name, scales = "free")
+
+pred.dist1 #histogram w/ counts
+```
+
+```{r}
+pred.dist2 <- ggplot(wine_long, aes(x=value)) +
+  geom_density() +
+  facet_wrap(~ name, scales = "free")
+
+pred.dist2 #density histogram
+```
+
+We see some columns are skewed right (e.g. sugar, sulfur dioxide, chlorides), we may need to apply transformation to some predictors. 
+
+```{r}
+apply(df1, 2, shapiro.test) #we can check if our predictors are normally dist.
+```
+```{r}
+library(MASS)
+library(car)
+shapiro.test(df1$pH)
+```
+
+
+```{r}
+table(red$quality)
+```
+
+```{r}
+#correlation heat map
+
+install.packages("lattice") #load and install package
+library(lattice)
+
+corr_mat <- round(cor(red), 2)
+head(corr_mat)
+```
+
+```{r}
+install.packages("reshape2")
+library(reshape2)
+```
+
+```{r}
+# reorder corr matrix
+# using corr coefficient as distance metric
+dist <- as.dist((1-corr_mat)/2)
+ 
+# hierarchical clustering the dist matrix
+hc <- hclust(dist)
+corr_mat <-corr_mat[hc$order, hc$order]
+ 
+# reduce the size of correlation matrix
+melted_corr_mat <- melt(corr_mat)
+#head(melted_corr_mat)
+ 
+#plotting the correlation heatmap
+library(ggplot2)
+ggplot(data = melted_corr_mat, aes(x=Var1, y=Var2, fill=value)) +
+geom_tile() +
+  geom_text(aes(Var2, Var1, label = value),
+          color = "black", size = 4)
+```
+
+Quality has high correlation with alcohol (0.48) and density (-0.5)
+
+## Model Building
+
+## split data into test and training set
+
+```{r}
+set.seed(4235)
+n <- nrow(df1)
+train_index <- sample(1:n, size = round(0.7*n))
+wine_train <- df1[train_index, ]
+wine_test <- df1[-train_index, ]
+```
+
+
+```{r}
+#build model with training data
+#fit full model with 11 predictors
+glm_full <- glm(quality ~ ., family="binomial", data=wine_train)
+summary(glm_full)
+```
+
+```{r}
+glm_reduced <- step(glm_full) #variable selection with step function
+summary(glm_reduced)
+```
+```{r}
+#make prediction on test set
+probs <- predict(glm_reduced, newdata = wine_test, type="response")
+preds1 <- ifelse(probs > 0.5, 1, 0)
+```
+
+```{r}
+#confusion matrix 
+cm1 <- table(prediction = preds1, actual = wine_test$quality)
+addmargins(cm1)
+```
+```{r}
+(166 + 195)/480 #accuracy
+166/218 #specificity
+195/262 #sensitivity
+```
+
+
+With the confusion matrix we can calculate the accuracy, sensitivity, and specificity. 
+
+```{r}
+#compare against null model
+table(wine_test$quality)
+```
+See how our model performs againt the null model where predictions are all majority class.
+
+## Roc Curve
+
+```{r}
+library(pROC)
+
+```
+
+```{r}
+roc_obj <- roc(wine_test$quality, probs)
+auc(roc_obj)
+```
+```{r}
+plot(1 - roc_obj$specificities, roc_obj$sensitivities, type="l",
+     xlab = "1 - Specificity", ylab = "Sensitivity")
+abline(0, 1, lty=2)
+```
+
+
+## Model Diagnostics
+
+```{r}
+car::vif(glm_reduced) #check for multicollinearity
+```
+There are no predictors with a VIF greater than 5. Alternatively, we can consider removing citric acid and refitting our model.
+
+```{r}
+df2 <- wine_test[, -12]
+df2 <- df2 %>%
+  mutate(logit = log(probs/(1-probs))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
+  
+
+```
+
+```{r}
+ggplot(df2, aes(logit, predictor.value)) +
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") +
+  facet_wrap(~predictors, scales = "free_y")
+```
+graph estimated probabilities (logit) on x-axis, actual value on y-axis for all variables.
+
+
+```{r}
+library(broom)
+model.data <- augment(glm_reduced) %>%
+  mutate(index = 1:n())
+```
+
+```{r}
+model.data %>% top_n(3, .cooksd)
+```
+
+```{r}
+ggplot(model.data, aes(index, .std.resid)) +
+  geom_point(aes(color = quality), alpha = 0.5) +
+  theme_bw()
+```
+```{r}
+model.data %>% 
+  filter(abs(.std.resid) > 3)
+```
+
+```{r}
+library(caret)
+varImp(glm_reduced, scale=FALSE) #variable importance for predictors 
+```
+
+The top 3 most important predictors were Alcohol, volatile acidity, and sulphates. 
